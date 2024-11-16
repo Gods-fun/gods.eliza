@@ -20,11 +20,13 @@
         "docker": "pnpm docker:build && pnpm docker:run && pnpm docker:bash"
     },
     "devDependencies": {
+        "@types/node": "22.8.4",
         "concurrently": "^9.1.0",
         "husky": "^9.1.6",
         "lerna": "^8.1.5",
         "only-allow": "^1.2.1",
         "prettier": "^3.3.3",
+        "ts-node": "10.9.2",
         "typedoc": "^0.26.11",
         "typescript": "5.6.3"
     },
