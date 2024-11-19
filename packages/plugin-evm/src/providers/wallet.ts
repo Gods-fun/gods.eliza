@@ -10,7 +10,6 @@ import {
 import {
     ChainConfig,
     WalletPortfolio,
-    TokenBalance,
     PriceData
 } from '../types/types';
 

@@ -1,5 +1,5 @@
 import { createPublicClient, formatUnits, http, Address } from 'viem';
-import settings from '../core/settings';
+import settings from '@ai16z/eliza/src/settings.ts';
 
 const ERC20_ABI = [
     {

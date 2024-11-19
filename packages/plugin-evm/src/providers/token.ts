@@ -1,8 +1,6 @@
 import {
     createPublicClient,
     http,
-    formatUnits,
-    getContract,
     type Address,
     type PublicClient
 } from 'viem';
@@ -10,7 +8,6 @@ import { ChainConfig } from '../types/types';
 import NodeCache from "node-cache";
 import * as path from "path";
 import * as fs from "fs";
-import { toBN } from '../utils/bignumber';
 import { BalancesProvider } from './balances';
 import {
     ProcessedTokenData,

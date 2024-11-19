@@ -1,5 +1,6 @@
 import { type Address } from 'viem';
 
+
 export interface TokenSecurityData {
     ownerBalance: string;
     deployerBalance: string;  // Changed from creatorBalance for EVM
@@ -201,4 +202,66 @@ export interface PriceData {
     [symbol: string]: {
         usd: string;
     };
+}
+
+export interface TokenMetadata {
+    symbol: string;
+    name: string;
+    address: Address;
+    decimals: number;
+    chainId: number;
+    logoURI?: string;
+    tags?: string[];
+}
+
+export interface NetworkMetadata {
+    chainId: number;
+    name: string;
+    rpcUrl: string;
+    nativeCurrency: {
+        name: string;
+        symbol: string;
+        decimals: number;
+    };
+    blockExplorerUrl?: string;
+    enabled: boolean;
+}
+
+export interface ProtocolConfig {
+    routerAddress: Address;
+    factoryAddress: Address;
+    quoterAddress?: Address;
+    version: 'v2' | 'v3';
+    defaultFeeBps: number;
+}
+
+export interface ITokenAdapter {
+    getToken(symbol: string, chainId: number): Promise<TokenMetadata | undefined>;
+    getNetworkTokens(chainId: number): Promise<TokenMetadata[]>;
+    registerToken(metadata: TokenMetadata): Promise<boolean>;
+    removeToken(symbol: string, chainId: number): Promise<boolean>;
+}
+
+export interface INetworkAdapter {
+    getNetwork(chainId: number): Promise<NetworkMetadata | undefined>;
+    getNetworks(): Promise<NetworkMetadata[]>;
+    registerNetwork(metadata: NetworkMetadata, protocolConfig?: ProtocolConfig): Promise<void>;
+    getProtocolConfig(chainId: number): Promise<ProtocolConfig | undefined>;
+    setNetworkEnabled(chainId: number, enabled: boolean): Promise<boolean>;
+}
+
+export interface SwapParams {
+    fromToken: string;
+    toToken: string;
+    amount: string;
+    network: string;
+    slippageBps?: number;
+}
+
+export interface SwapQuote {
+    amountIn: bigint;
+    amountOut: bigint;
+    priceImpact: number;
+    route: Address[];
+    feeBps: number;
 }

@@ -40,6 +40,10 @@ export class BalancesProvider {
     constructor(chainConfig: ChainConfig) {
         this.chainConfig = chainConfig;
         this.client = createPublicClient({
+            account: {
+                address: chainConfig.contracts[0],
+                type: "json-rpc";
+            },
             chain: {
                 id: chainConfig.chainId,
                 name: chainConfig.name,

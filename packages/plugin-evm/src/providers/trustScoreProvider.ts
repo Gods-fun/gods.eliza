@@ -14,9 +14,9 @@ import {
     TradePerformance,
     TokenRecommendation,
 } from "../adapters/trustScoreDatabase";
-import { ProcessedTokenData } from '../types/types';
-import { IAgentRuntime } from "@ai16z/eliza/src/types";
-import settings from "@ai16z/eliza/src/settings";
+import { ProcessedTokenData } from '@ai16z/core/src/types';
+import { IAgentRuntime } from "@ai16z/core/src/types";
+import settings from "@ai16z/core/src/settings";
 
 interface TradeData {
     buy_amount: number;
