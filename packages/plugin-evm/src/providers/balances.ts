@@ -7,7 +7,7 @@ import {
     type PublicClient,
     type Chain
 } from 'viem';
-import { ChainConfig, TokenBalance, WalletPortfolio, PriceData } from '../types/types';
+import { ChainConfig, TokenBalance, WalletPortfolio, PriceData } from '../types';
 
 const ERC20_ABI = [
     {

@@ -6,7 +6,7 @@ import {
     type PublicClient
 } from 'viem';
 import { TokenProvider } from "./token";
-import { ChainConfig } from '../types/types';
+import { ChainConfig } from '../types';
 import {
     TrustScoreDatabase,
     RecommenderMetrics,

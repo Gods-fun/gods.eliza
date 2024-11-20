@@ -1,246 +1,146 @@
-import {
-    Action,
-    ActionExample,
-    Content,
-    HandlerCallback,
-    IAgentRuntime,
-    Memory,
-    ModelClass,
-    Handler,
-    Validator,
-    State,
-} from "@ai16z/eliza";
-import { composeContext, generateText, parseJSONObjectFromText } from "@ai16z/eliza";
-import { parseUnits, formatUnits } from 'viem';
-import { TokenRegistry } from '../adapters/tokenRegistry';
-import { NetworkRegistry } from '../adapters/networkRegistry';
-import { EVMProvider } from '../providers/evmprovider';
+import type { Route, RoutesRequest, TransactionRequest as LiFiTransactionRequest } from '@lifi/types'
+import type { WalletProvider } from '../providers/wallet'
+import type { Transaction, SwapParams } from '../types'
+import { ByteArray, type Hex } from 'viem'
+import { TokenRegistry } from '../adapters/tokenRegistry'
+import { NetworkRegistry } from '../adapters/networkRegistry'
+import UniswapV2RouterABI from '../abis/UniswapV2RouterABI.json'
+import UniswapV3RouterABI from '../abis/UniswapV3RouterABI.json'
 
-export const swapTemplate = `# Messages we are searching for a swap
+export const swapTemplate = `Given the recent messages and wallet information below:
+
 {{recentMessages}}
 
-# Instructions: {{senderName}} is requesting to swap tokens. Determine the following:
-1. Source token (the token they want to swap from)
-2. Target token (the token they want to swap to)
-3. Amount to swap
-4. Network to use (if specified, default to "mainnet")
+{{walletInfo}}
 
-Your response must be formatted as a JSON block with this structure:
+Extract the following information about the requested token swap:
+- Input token symbol or address (the token being sold)
+- Output token symbol or address (the token being bought)
+- Amount to swap
+- Chain to execute on (ethereum or base)
+- Slippage tolerance (optional)
+- Swap protocol (LiFi or Uniswap)
+
+Respond with a JSON markdown block containing only the extracted values:
+
 \`\`\`json
 {
-  "fromToken": "<Token Symbol>",
-  "toToken": "<Token Symbol>",
-  "amount": "<Amount as string>",
-  "network": "<Network Name>"
+    "inputToken": string | null,
+    "outputToken": string | null,
+    "amount": string | null,
+    "chain": "ethereum" | "base" | null,
+    "slippage": number | null,
+    "protocol": "LiFi" | "Uniswap" | null
 }
 \`\`\`
-`;
+`
 
-interface SwapParams {
-    fromToken: string;
-    toToken: string;
-    amount: string;
-    network: string;
-}
+export class SwapAction {
+    private tokenRegistry: TokenRegistry
+    private networkRegistry: NetworkRegistry
 
-const getSwapParams = async (
-    runtime: IAgentRuntime,
-    message: Memory,
-    state: State
-): Promise<SwapParams | null> => {
-    if (!state) {
-        state = (await runtime.composeState(message)) as State;
+    constructor(
+        private walletProvider: WalletProvider,
+        tokenRegistry: TokenRegistry,
+        networkRegistry: NetworkRegistry
+    ) {
+        this.tokenRegistry = tokenRegistry
+        this.networkRegistry = networkRegistry
     }
 
-    const context = composeContext({
-        state,
-        template: swapTemplate,
-    });
+    async swap(params: SwapParams): Promise<Transaction> {
+        const walletClient = this.walletProvider.getWalletClient()
+        const [fromAddress] = await walletClient.getAddresses()
 
-    for (let i = 0; i < 3; i++) {
-        const response = await generateText({
-            runtime,
-            context,
-            modelClass: ModelClass.SMALL,
-        });
+        await this.walletProvider.switchChain(params.chain)
 
-        const parsedResponse = parseJSONObjectFromText(response) as SwapParams | null;
-        if (
-            parsedResponse?.fromToken &&
-            parsedResponse?.toToken &&
-            parsedResponse?.amount
-        ) {
-            return {
-                ...parsedResponse,
-                network: parsedResponse.network || 'mainnet'
-            };
-        }
-    }
-    return null;
-};
+        const inputToken = await this.tokenRegistry.getToken(params.inputToken, params.chain)
+        const outputToken = await this.tokenRegistry.getToken(params.outputToken, params.chain)
+        const network = await this.networkRegistry.getNetwork(params.chain)
 
-async function validateSwapParams(params: SwapParams): Promise<void> {
-    const networkRegistry = NetworkRegistry.getInstance();
-    const tokenRegistry = TokenRegistry.getInstance();
-
-    // Get network
-    const networks = await networkRegistry.getNetworks();
-    const network = networks.find(n => n.name.toLowerCase() === params.network.toLowerCase());
-    if (!network) {
-        throw new Error(`Network ${params.network} is not supported`);
-    }
-
-    // Validate tokens exist on the network
-    const fromToken = await tokenRegistry.getToken(params.fromToken, network.chainId);
-    const toToken = await tokenRegistry.getToken(params.toToken, network.chainId);
-
-    if (!fromToken) {
-        throw new Error(`Token ${params.fromToken} not supported on ${params.network}`);
-    }
-    if (!toToken) {
-        throw new Error(`Token ${params.toToken} not supported on ${params.network}`);
-    }
-
-    // Validate amount format
-    try {
-        parseUnits(params.amount, fromToken.decimals);
-    } catch (e) {
-        throw new Error(`Invalid amount format for ${params.fromToken}`);
-    }
-}
-
-const validate: Validator = async (
-    runtime: IAgentRuntime,
-    message: Memory,
-    state: State
-): Promise<boolean> => {
-    if (message.content.source !== "discord") {
-        return false;
-    }
-
-    const text = message.content.text.toLowerCase();
-    const swapKeywords = ['swap', 'trade', 'exchange'];
-
-    // Look for token symbols
-    const hasTokenSymbols = /\b(eth|weth|usdc|dai|usdt|matic|usdbc)\b/i.test(text);
-
-    // Look for amounts
-    const hasAmount = /\d+(\.\d+)?\s*(eth|weth|usdc|dai|usdt|matic|usdbc)/i.test(text);
-
-    return swapKeywords.some(keyword => text.includes(keyword)) &&
-        hasTokenSymbols &&
-        hasAmount;
-};
-
-const handler: Handler = async (
-    runtime: IAgentRuntime,
-    message: Memory,
-    state: State,
-    options: any,  // Added options parameter
-    callback: HandlerCallback
-): Promise<Content> => {
-    try {
-        const params = await getSwapParams(runtime, message, state);
-        if (!params) {
-            throw new Error("Couldn't understand swap details. Please specify tokens and amount clearly.");
+        if (!inputToken || !outputToken || !network) {
+            throw new Error('Invalid token or network')
         }
 
-        await validateSwapParams(params);
-
-        const networkRegistry = NetworkRegistry.getInstance();
-        const networks = await networkRegistry.getNetworks();
-        const network = networks.find(n => n.name.toLowerCase() === params.network.toLowerCase())!;
-
-        const provider = await EVMProvider.getProvider(network.chainId);
-        const protocolConfig = await provider.getProtocolConfig();
-        if (!protocolConfig) {
-            throw new Error(`No DEX protocol configured for ${params.network}`);
-        }
-
-        const tokenRegistry = TokenRegistry.getInstance();
-        const fromToken = await tokenRegistry.getToken(params.fromToken, network.chainId);
-        const toToken = await tokenRegistry.getToken(params.toToken, network.chainId);
-
-        if (!fromToken || !toToken) {
-            throw new Error('Token configuration not found');
-        }
-
-        // Parse amount with correct decimals and format for display
-        const amountIn = parseUnits(params.amount, fromToken.decimals);
-        const formattedAmount = formatUnits(amountIn, fromToken.decimals);
-
-        const response: Content = {
-            text: `Preparing swap on ${network.name}:\n` +
-                `Amount: ${formattedAmount} ${params.fromToken}\n` +
-                `To: ${params.toToken}\n` +
-                `Protocol: ${protocolConfig.version}\n` +
-                `Fee: ${protocolConfig.defaultFeeBps / 100}%\n\n` +
-                `Would you like me to execute this swap? (Reply with 'yes' to proceed)`,
-            action: "SWAP_TOKEN_QUOTE",
-            source: message.content.source,
-            metadata: {
-                params,
-                fromToken,
-                toToken,
-                network
+        if (params.protocol === 'LiFi') {
+            const routeRequest: RoutesRequest = {
+                fromChainId: network.chainId,
+                toChainId: network.chainId,
+                fromTokenAddress: inputToken.address,
+                toTokenAddress: outputToken.address,
+                fromAmount: params.amount,
+                fromAddress: fromAddress,
+                options: {
+                    slippage: params.slippage || 0.5,
+                    order: 'RECOMMENDED'
+                }
             }
-        };
 
-        await callback(response);
-        return response;
+            const response = await fetch('https://li.quest/v1/routes', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(routeRequest)
+            })
 
-    } catch (error) {
-        const response: Content = {
-            text: `Error: ${error.message}`,
-            source: message.content.source,
-        };
-        await callback(response);
-        return response;
+            const { routes } = await response.json()
+            if (!routes.length) throw new Error('No routes found')
+
+            const route = routes[0] as Route
+            const lifiTxRequest = route.steps[0].transactionRequest as LiFiTransactionRequest
+
+            try {
+                const hash = await walletClient.sendTransaction({
+                    account: fromAddress,
+                    to: lifiTxRequest.to as Hex,
+                    data: lifiTxRequest.data as Hex,
+                    value: BigInt(lifiTxRequest.value || 0),
+                    kzg: {
+                        blobToKzgCommitment: function (blob: ByteArray): ByteArray {
+                            throw new Error('Function not implemented.')
+                        },
+                        computeBlobKzgProof: function (blob: ByteArray, commitment: ByteArray): ByteArray {
+                            throw new Error('Function not implemented.')
+                        }
+                    },
+                    chain: undefined
+                })
+
+                return {
+                    hash,
+                    from: fromAddress,
+                    to: lifiTxRequest.to as Hex,
+                    value: BigInt(params.amount),
+                    data: lifiTxRequest.data as Hex
+                }
+            } catch (error) {
+                throw new Error(`Swap failed: ${error.message}`)
+            }
+        } else if (params.protocol === 'Uniswap') {
+            const uniswapRouterAddress = network.uniswapRouterAddress
+            const uniswapRouterABI = network.uniswapRouterABI === 'v2' ? UniswapV2RouterABI : UniswapV3RouterABI
+
+            const swapTx = await walletClient.sendTransaction({
+                from: fromAddress,
+                to: uniswapRouterAddress,
+                value: 0,
+                data: encodeFunctionData(uniswapRouterABI, 'swapExactTokensForTokens', [
+                    params.amount,
+                    0,
+                    [inputToken.address, outputToken.address],
+                    fromAddress,
+                    Math.floor(Date.now() / 1000) + 60 * 20
+                ])
+            })
+
+            return {
+                hash: swapTx.hash,
+                from: fromAddress,
+                to: uniswapRouterAddress,
+                value: 0,
+                data: swapTx.data
+            }
+        } else {
+            throw new Error('Invalid protocol')
+        }
     }
-};
-
-const swapAction: Action = {
-    name: "SWAP_TOKEN",
-    similes: [
-        "SWAP",
-        "TRADE",
-        "EXCHANGE",
-    ],
-    description: "Swaps between supported tokens on EVM networks",
-    validate,
-    handler,
-    examples: [
-        [
-            {
-                user: "{{user1}}",
-                content: {
-                    text: "I want to swap 10 ETH for DAI on mainnet",
-                },
-            },
-            {
-                user: "{{user2}}",
-                content: {
-                    text: "Preparing swap on mainnet:\nAmount: 10 ETH\nTo: DAI\nProtocol: v3\nFee: 0.3%\n\nWould you like me to execute this swap? (Reply with 'yes' to proceed)",
-                    action: "SWAP_TOKEN_QUOTE",
-                },
-            },
-        ],
-        [
-            {
-                user: "{{user1}}",
-                content: {
-                    text: "swap 100 USDC for ETH on base",
-                },
-            },
-            {
-                user: "{{user2}}",
-                content: {
-                    text: "Preparing swap on base:\nAmount: 100 USDC\nTo: ETH\nProtocol: v3\nFee: 0.3%\n\nWould you like me to execute this swap? (Reply with 'yes' to proceed)",
-                    action: "SWAP_TOKEN_QUOTE",
-                },
-            },
-        ],
-    ] as ActionExample[][],
-};
-
-export default swapAction;
+}
