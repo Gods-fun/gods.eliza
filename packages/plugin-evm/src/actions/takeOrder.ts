@@ -3,7 +3,6 @@ import {
     IAgentRuntime,
     Memory,
     Content,
-    ActionExample,
     ModelClass,
 } from "@ai16z/eliza/src/types.ts";
 import * as fs from "fs";
