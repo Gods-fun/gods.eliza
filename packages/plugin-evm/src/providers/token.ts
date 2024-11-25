@@ -1,35 +1,23 @@
 import {
+    IAgentRuntime,
+    TokenData,
+    Address,
+    ChainConfig,
+    TokenSecurityData,
+    TokenTradeData
+} from '../types';
+
+import axios from 'axios';
+import {
     createPublicClient,
     http,
-    type Address,
-    type PublicClient
+    PublicClient,
+    formatUnits
 } from 'viem';
-import { ChainConfig } from '../types/types';
 import NodeCache from "node-cache";
 import * as path from "path";
 import * as fs from "fs";
-import { BalancesProvider } from './balances';
-import {
-    ProcessedTokenData,
-    TokenSecurityData,
-    TokenTradeData,
-    CalculatedBuyAmounts
-} from "../types/types";
-
-const PROVIDER_CONFIG = {
-    MAX_RETRIES: 3,
-    RETRY_DELAY: 2000,
-    DEXSCREENER_API: "https://api.dexscreener.com/latest/dex",
-    MORALIS_API: "https://deep-index.moralis.io/api/v2",
-    COVALENT_API: "https://api.covalenthq.com/v1",
-    // Example contracts (Ethereum Mainnet)
-    TOKEN_ADDRESSES: {
-        ETH: "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE",
-        WETH: "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
-        USDC: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
-        // Add more token addresses
-    }
-};
+import { BalancesProvider } from './balancesProvider';
 
 export class TokenProvider {
     private client: PublicClient;
@@ -39,30 +27,25 @@ export class TokenProvider {
     private balancesProvider: BalancesProvider;
 
     constructor(
-        tokenAddress: Address,
         chainConfig: ChainConfig,
-        balancesProvider: BalancesProvider
+        balancesProvider: BalancesProvider,
+        cacheDir?: string
     ) {
         this.chainConfig = chainConfig;
-        this.balancesProvider = balancesProvider;
         this.client = createPublicClient({
-            chain: {
-                id: chainConfig.chainId,
-                name: chainConfig.name,
-                nativeCurrency: chainConfig.nativeCurrency,
-            },
+            chain: chainConfig.chain,
             transport: http(chainConfig.rpcUrl)
         });
+        this.cache = new NodeCache({ stdTTL: 600, checkperiod: 120 });
+        this.cacheDir = cacheDir || path.join(process.cwd(), '.cache');
+        this.balancesProvider = balancesProvider;
 
-        this.cache = new NodeCache({ stdTTL: 300 }); // 5 minutes cache
-        const __dirname = path.resolve();
-        this.cacheDir = path.join(__dirname, "cache");
         if (!fs.existsSync(this.cacheDir)) {
-            fs.mkdirSync(this.cacheDir);
+            fs.mkdirSync(this.cacheDir, { recursive: true });
         }
     }
 
-    // Caching methods remain the same...
+
 
     async fetchTokenSecurity(): Promise<TokenSecurityData> {
         const cacheKey = `tokenSecurity_${this.tokenAddress}`;
@@ -179,26 +162,106 @@ export class TokenProvider {
         }
     }
 
-    // Additional methods for EVM-specific functionality...
+    private async fetchContractInfo(address: Address): Promise<any> {
+        const apiKey = process.env.ETHERSCAN_API_KEY;
+        const url = `https://api.etherscan.io/api?module=contract&action=getabi&address=${address}&apikey=${apiKey}`;
 
-    private async fetchContractInfo() {
-        // Implementation for fetching contract info using Etherscan-like API
+        try {
+            const response = await axios.get(url);
+            if (response.data.status === '1') {
+                return JSON.parse(response.data.result);
+            } else {
+                throw new Error(`Etherscan API error: ${response.data.message}`);
+            }
+        } catch (error) {
+            console.error('Error fetching contract info:', error);
+            throw error;
+        }
     }
 
-    private async fetchHolderDistribution() {
-        // Implementation for fetching holder distribution using Covalent/Moralis
+    private async fetchHolderDistribution(address: Address): Promise<any> {
+        const apiKey = process.env.COVALENT_API_KEY;
+        const url = `https://api.covalenthq.com/v1/${this.chainConfig.chainId}/tokens/${address}/token_holders/?key=${apiKey}`;
+
+        try {
+            const response = await axios.get(url);
+            return response.data.data.items;
+        } catch (error) {
+            console.error('Error fetching holder distribution:', error);
+            throw error;
+        }
     }
 
-    private async fetchDexStats() {
-        // Implementation for fetching DEX statistics
+    private async fetchDexStats(address: Address): Promise<any> {
+        // This is a simplified example. You might need to integrate with specific DEX APIs or use a service like DexGuru
+        const apiKey = process.env.DEXGURU_API_KEY;
+        const url = `https://api.dex.guru/v1/tokens/${address}-${this.chainConfig.chainId}`;
+
+        try {
+            const response = await axios.get(url, {
+                headers: { 'api-key': apiKey }
+            });
+            return response.data;
+        } catch (error) {
+            console.error('Error fetching DEX stats:', error);
+            throw error;
+        }
     }
 
-    private async fetchGraphData() {
-        // Implementation for fetching data from subgraphs
+    private async fetchGraphData(subgraphUrl: string, query: string): Promise<any> {
+        try {
+            const response = await axios.post(subgraphUrl, { query });
+            return response.data.data;
+        } catch (error) {
+            console.error('Error fetching graph data:', error);
+            throw error;
+        }
     }
 
     private async getNativeTokenPrice(): Promise<number> {
-        // Implementation for getting native token price
+        const coingeckoId = this.chainConfig.chainId === 1 ? 'ethereum' : 'base';
+        const url = `https://api.coingecko.com/api/v3/simple/price?ids=${coingeckoId}&vs_currencies=usd`;
+
+        try {
+            const response = await axios.get(url);
+            return response.data[coingeckoId].usd;
+        } catch (error) {
+            console.error('Error fetching native token price:', error);
+            throw error;
+        }
+    }
+
+    public async getTokenDetails(address: Address): Promise<TokenData & {
+        contractInfo: any;
+        holderDistribution: any;
+        dexStats: any;
+        price: number;
+    }> {
+        const [
+            tokenData,
+            contractInfo,
+            holderDistribution,
+            dexStats,
+            nativePrice
+        ] = await Promise.all([
+            this.getTokenData(address),
+            this.fetchContractInfo(address),
+            this.fetchHolderDistribution(address),
+            this.fetchDexStats(address),
+            this.getNativeTokenPrice()
+        ]);
+
+        // Assuming the token price is in the dexStats
+        const tokenPriceInNative = dexStats.priceNative || 0;
+        const tokenPriceUsd = tokenPriceInNative * nativePrice;
+
+        return {
+            ...tokenData,
+            contractInfo,
+            holderDistribution,
+            dexStats,
+            price: tokenPriceUsd
+        };
     }
 }
 

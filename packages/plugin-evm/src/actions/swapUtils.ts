@@ -1,5 +1,4 @@
-import { createPublicClient, createWalletClient, http, custom, type PublicClient, type WalletClient, type Chain } from 'viem'
-import { mainnet, base } from 'viem/chains'
+import { createPublicClient, createWalletClient, http, custom, type PublicClient, type WalletClient, type Chain, formatUnits, parseUnits, encodeFunctionData } from 'viem'
 import { TokenRegistry } from '../adapters/tokenRegistry'
 import { NetworkRegistry } from '../adapters/networkRegistry'
 import UniswapV2RouterABI from '../abis/UniswapV2RouterABI.json'
@@ -29,8 +28,8 @@ export class SwapUtils {
             transport: http(CHAIN_CONFIGS[params.chain].rpcUrl)
         })
 
-        const inputToken = await this.tokenRegistry.getToken(params.fromToken)
-        const outputToken = await this.tokenRegistry.getToken(params.toToken)
+        const inputToken = this.tokenRegistry.getToken(params.inputToken, params.chain)
+        const outputToken = this.tokenRegistry.getToken(params.outputToken, params.chain)
 
         if (!inputToken || !outputToken) {
             throw new Error('Invalid token')

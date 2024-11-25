@@ -4,8 +4,6 @@ import {
     custom,
     parseUnits,
     http,
-    type Address,
-    encodeFunctionData
 } from 'viem';
 import settings from "@ai16z/eliza/src/settings.ts";
 import {
@@ -18,6 +16,7 @@ import {
     State,
     type Action,
 } from "@ai16z/eliza/src/types.ts";
+import ERC20ABI from "../abis/ERC20ABI.json";
 import { composeContext } from "@ai16z/eliza/src/context.ts";
 import { generateObject } from "@ai16z/eliza/src/generation.ts";
 
@@ -26,26 +25,6 @@ export interface TransferContent extends Content {
     recipient: string;
     amount: string | number;
 }
-
-const erc20Abi = [
-    {
-        inputs: [
-            { name: "recipient", type: "address" },
-            { name: "amount", type: "uint256" }
-        ],
-        name: "transfer",
-        outputs: [{ name: "success", type: "bool" }],
-        stateMutability: "nonpayable",
-        type: "function"
-    },
-    {
-        inputs: [],
-        name: "decimals",
-        outputs: [{ type: "uint8" }],
-        stateMutability: "view",
-        type: "function"
-    }
-] as const;
 
 function isTransferContent(
     content: any
@@ -173,13 +152,13 @@ export default {
                 // First get token decimals
                 const decimals = await publicClient.readContract({
                     address: tokenAddress,
-                    abi: erc20Abi,
+                    abi: ERC20ABI,
                     functionName: 'decimals'
                 });
 
                 const txHash = await walletClient.writeContract({
                     address: tokenAddress,
-                    abi: erc20Abi,
+                    abi: ERC20ABI,
                     functionName: 'transfer',
                     args: [recipient, parseUnits(content.amount.toString(), decimals)]
                 });

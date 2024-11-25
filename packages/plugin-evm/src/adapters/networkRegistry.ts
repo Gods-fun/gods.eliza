@@ -1,4 +1,4 @@
-import {NetworkMetadata, ProtocolConfig} from "../types/types.ts";
+import {NetworkMetadata, ProtocolConfig} from "../types/";
 
 /**
  * @title Dynamic Network Registry

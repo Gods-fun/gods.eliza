@@ -16,6 +16,7 @@ import {
 } from "@ai16z/eliza";
 import { bootstrapPlugin } from "@ai16z/plugin-bootstrap";
 import { solanaPlugin } from "@ai16z/plugin-solana";
+import { evmPlugin } from "@ai16z/plugin-evm";
 import { nodePlugin } from "@ai16z/plugin-node";
 import Database from "better-sqlite3";
 import fs from "fs";
@@ -223,6 +224,16 @@ export async function createAgent(
     db: any,
     token: string
 ) {
+
+    const plugins = [bootstrapPlugin, nodePlugin];
+
+    if (character.settings.secrets?.SOLANA_PUBLIC_KEY) {
+        plugins.push(solanaPlugin);
+    }
+
+    if (character.settings.secrets?.EVM_PRIVATE_KEY) {
+        plugins.push(evmPlugin);
+    }
     console.log("Creating runtime for character", character.name);
     return new AgentRuntime({
         databaseAdapter: db,
@@ -230,11 +241,7 @@ export async function createAgent(
         modelProvider: character.modelProvider,
         evaluators: [],
         character,
-        plugins: [
-            bootstrapPlugin,
-            nodePlugin,
-            character.settings.secrets?.WALLET_PUBLIC_KEY ? solanaPlugin : null,
-        ].filter(Boolean),
+        plugins: plugins.filter(Boolean),
         providers: [],
         actions: [],
         services: [],
