@@ -1,253 +1,96 @@
-import {
-    createPublicClient,
-    http,
-    formatUnits,
-    getContract,
-    type Address,
-    type PublicClient,
-    type Chain
-} from 'viem';
-import { ChainConfig, TokenBalance, WalletPortfolio, PriceData } from '../types';
-
-const ERC20_ABI = [
-    {
-        inputs: [{ name: "account", type: "address" }],
-        name: "balanceOf",
-        outputs: [{ type: "uint256" }],
-        stateMutability: "view",
-        type: "function",
-    },
-    {
-        inputs: [],
-        name: "decimals",
-        outputs: [{ type: "uint8" }],
-        stateMutability: "view",
-        type: "function",
-    },
-    {
-        inputs: [],
-        name: "symbol",
-        outputs: [{ type: "string" }],
-        stateMutability: "view",
-        type: "function",
-    }
-] as const;
+import { createPublicClient, http, formatUnits, PublicClient } from 'viem';
+import { Address, ChainConfig, TokenBalance, WalletPortfolio, TokenData } from '../types';
+import axios from 'axios';
 
 export class BalancesProvider {
     private client: PublicClient;
-    private chainConfig: ChainConfig;
 
     constructor(chainConfig: ChainConfig) {
-        this.chainConfig = chainConfig;
         this.client = createPublicClient({
-            account: {
-                address: chainConfig.contracts[0],
-                type: "json-rpc";
-            },
-            chain: {
-                id: chainConfig.chainId,
-                name: chainConfig.name,
-                nativeCurrency: chainConfig.nativeCurrency,
-            } as Chain,
+            chain: chainConfig.chain,
             transport: http(chainConfig.rpcUrl)
         });
     }
 
-    async getBalances(address: Address): Promise<WalletPortfolio> {
-        try {
-            // Get native balance
-            const nativeBalance = await this.client.getBalance({ address });
-            const formattedNativeBalance = formatUnits(
-                nativeBalance,
-                this.chainConfig.nativeCurrency.decimals
-            );
+    async getTokenBalances(address: Address, tokens: TokenData[]): Promise<TokenBalance[]> {
+        const balances = await Promise.all(tokens.map(async (token) => {
+            const balance = await this.client.readContract({
+                address: token.address,
+                abi: [{
+                    inputs: [{ name: '_owner', type: 'address' }],
+                    name: 'balanceOf',
+                    outputs: [{ name: 'balance', type: 'uint256' }],
+                    type: 'function',
+                    stateMutability: 'view'
+                }],
+                functionName: 'balanceOf',
+                args: [address],
+            });
 
-            // Get ERC20 token balances and prices
-            const tokenBalances = await this.getTokenBalances(address);
-
-            // Get native token price
-            const nativePrice = await this.getNativePrice();
-            const nativeValue = (
-                Number(formattedNativeBalance) *
-                Number(nativePrice)
-            ).toString();
-
-            // Add native token to balances
-            const nativeToken: TokenBalance = {
-                token: '0x0000000000000000000000000000000000000000', // ETH address convention
-                symbol: this.chainConfig.nativeCurrency.symbol,
-                balance: formattedNativeBalance,
-                decimals: this.chainConfig.nativeCurrency.decimals,
-                price: nativePrice,
-                value: nativeValue
-            };
-
-            // Calculate total value
-            const totalValue = [nativeValue, ...tokenBalances.map(t => t.value)]
-                .reduce((sum, val) => sum + Number(val), 0)
-                .toString();
+            const formattedBalance = formatUnits(balance as bigint, token.decimals);
+            const price = await this.getTokenPrice(token.address, token.chainId);
 
             return {
-                totalValue,
-                nativeBalance: formattedNativeBalance,
-                tokens: [nativeToken, ...tokenBalances]
+                token: token.address,
+                symbol: token.symbol,
+                balance: formattedBalance,
+                decimals: token.decimals,
+                price,
             };
-        } catch (error) {
-            console.error('Error fetching balances:', error);
-            throw error;
+        }));
+
+        return balances;
+    }
+
+    async getNativeTokenBalance(address: Address, decimals: number): Promise<string> {
+        const balance = await this.client.getBalance({ address });
+        return formatUnits(balance, decimals);
+    }
+
+    async getTokenPrice(tokenAddress: Address, chainId: number): Promise<string> {
+        const response = await axios.get(`https://api.coingecko.com/api/v3/simple/token_price/${chainId}?contract_addresses=${tokenAddress}&vs_currencies=usd`);
+        return response.data[tokenAddress.toLowerCase()].usd.toString();
+    }
+
+    async getNativePrice(chainId: number): Promise<string> {
+        const response = await axios.get(`https://api.coingecko.com/api/v3/simple/price?ids=${this.getChainCoinGeckoId(chainId)}&vs_currencies=usd`);
+        return response.data[this.getChainCoinGeckoId(chainId)].usd.toString();
+    }
+
+    private getChainCoinGeckoId(chainId: number): string {
+        switch (chainId) {
+            case 1: return 'ethereum';
+            case 56: return 'binancecoin';
+            case 137: return 'matic-network';
+            // Add more chains as needed
+            default: throw new Error(`Unsupported chain ID: ${chainId}`);
         }
     }
 
-    private async getTokenBalances(address: Address): Promise<TokenBalance[]> {
-        const contracts = this.chainConfig.contracts || {};
-        const balances = await Promise.all(
-            Object.entries(contracts)
-                .filter(([key]) => key !== 'priceFeeds' && key !== 'dexRouter')
-                .map(async ([symbol, tokenAddress]) => {
-                    const contract = getContract({
-                        address: tokenAddress as Address,
-                        abi: ERC20_ABI,
-                        publicClient: this.client
-                    });
+    async getWalletPortfolio(address: Address, chainConfig: ChainConfig, tokens: TokenData[]): Promise<WalletPortfolio> {
+        const nativeBalance = await this.getNativeTokenBalance(address, chainConfig.chain.nativeCurrency.decimals);
+        const nativePrice = await this.getNativePrice(chainConfig.chainId);
 
-                    const [balance, decimals] = await Promise.all([
-                        contract.read.balanceOf([address]),
-                        contract.read.decimals()
-                    ]);
+        const nativeValue = (Number(nativeBalance) * Number(nativePrice)).toString();
 
-                    const formattedBalance = formatUnits(balance, decimals);
-                    const price = await this.getTokenPrice(tokenAddress as Address);
-                    const value = (Number(formattedBalance) * Number(price)).toString();
+        const nativeToken: TokenBalance = {
+            token: '0x0000000000000000000000000000000000000000' as Address,
+            symbol: chainConfig.chain.nativeCurrency.symbol,
+            balance: nativeBalance,
+            decimals: chainConfig.chain.nativeCurrency.decimals,
+            price: nativePrice,
+        };
 
-                    return {
-                        token: tokenAddress,
-                        symbol,
-                        balance: formattedBalance,
-                        decimals,
-                        price,
-                        value
-                    };
-                })
-        );
+        const tokenBalances = await this.getTokenBalances(address, tokens);
 
-        return balances.filter(b => Number(b.balance) > 0);
-    }
+        const totalValue = tokenBalances.reduce((acc, token) => {
+            return acc + (Number(token.balance) * Number(token.price));
+        }, Number(nativeValue)).toString();
 
-    private async getTokenPrice(tokenAddress: Address): Promise<string> {
-        const priceFeeds = this.chainConfig.contracts?.priceFeeds;
-
-        if (priceFeeds?.[tokenAddress]) {
-            return this.getPriceFromOracle(tokenAddress);
-        }
-
-        return this.getPriceFromDex(tokenAddress);
-    }
-
-    private async getPriceFromOracle(tokenAddress: Address): Promise<string> {
-        const feedAddress = this.chainConfig.contracts?.priceFeeds?.[tokenAddress];
-        if (!feedAddress) return '0';
-
-        try {
-            const priceFeed = getContract({
-                address: feedAddress as Address,
-                abi: [
-                    {
-                        inputs: [],
-                        name: "latestAnswer",
-                        outputs: [{ type: "int256" }],
-                        stateMutability: "view",
-                        type: "function"
-                    },
-                    {
-                        inputs: [],
-                        name: "decimals",
-                        outputs: [{ type: "uint8" }],
-                        stateMutability: "view",
-                        type: "function"
-                    }
-                ],
-                publicClient: this.client
-            });
-
-            const [price, decimals] = await Promise.all([
-                priceFeed.read.latestAnswer(),
-                priceFeed.read.decimals()
-            ]);
-
-            return formatUnits(price, decimals);
-        } catch (error) {
-            console.error('Error getting oracle price:', error);
-            return '0';
-        }
-    }
-
-    private async getPriceFromDex(tokenAddress: Address): Promise<string> {
-        const dexRouter = this.chainConfig.contracts?.dexRouter;
-        if (!dexRouter) return '0';
-
-        try {
-            const router = getContract({
-                address: dexRouter as Address,
-                abi: [
-                    {
-                        inputs: [
-                            { name: "amountIn", type: "uint256" },
-                            { name: "path", type: "address[]" }
-                        ],
-                        name: "getAmountsOut",
-                        outputs: [{ name: "amounts", type: "uint256[]" }],
-                        stateMutability: "view",
-                        type: "function"
-                    }
-                ],
-                publicClient: this.client
-            });
-
-            const wrappedNative = this.chainConfig.contracts?.wrappedNative as Address;
-            const path = [tokenAddress, wrappedNative];
-            const amounts = await router.read.getAmountsOut([BigInt(1e18), path]);
-            const nativePrice = await this.getNativePrice();
-
-            return (Number(formatUnits(amounts[1], 18)) * Number(nativePrice)).toString();
-        } catch (error) {
-            console.error('Error getting DEX price:', error);
-            return '0';
-        }
-    }
-
-    private async getNativePrice(): Promise<string> {
-        try {
-            const response = await fetch(
-                `https://api.coingecko.com/api/v3/simple/price?ids=${
-                    this.chainConfig.nativeCurrency.symbol.toLowerCase()
-                }&vs_currencies=usd`
-            );
-            const data: PriceData = await response.json();
-            return data[this.chainConfig.nativeCurrency.symbol.toLowerCase()].usd;
-        } catch (error) {
-            console.error('Error fetching native price:', error);
-            return '0';
-        }
-    }
-
-    formatBalance(portfolio: WalletPortfolio): string {
-        const nativeSymbol = this.chainConfig.nativeCurrency.symbol;
-        let output = `Balances on ${this.chainConfig.name}:\n`;
-
-        // Format native balance
-        const nativeToken = portfolio.tokens.find(t => t.token === '0x0000000000000000000000000000000000000000');
-        if (nativeToken) {
-            output += `${nativeSymbol}: ${nativeToken.balance} ($${Number(nativeToken.value).toFixed(2)})\n`;
-        }
-
-        // Format ERC20 balances
-        portfolio.tokens
-            .filter(t => t.token !== '0x0000000000000000000000000000000000000000')
-            .forEach(token => {
-                output += `${token.symbol}: ${token.balance} ($${Number(token.value).toFixed(2)})\n`;
-            });
-
-        output += `\nTotal Value: $${Number(portfolio.totalValue).toFixed(2)}`;
-        return output;
+        return {
+            nativeToken,
+            tokens: tokenBalances,
+            totalValue,
+        };
     }
 }

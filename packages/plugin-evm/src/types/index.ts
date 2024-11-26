@@ -1,4 +1,5 @@
 import {
+    Action,
     ActionExample,
     Content,
     HandlerCallback,
@@ -6,14 +7,10 @@ import {
     Memory,
     ModelClass,
     State,
-    Action,
 } from "@ai16z/eliza";
-
-import { PublicClient, WalletClient, Hash } from 'viem'
-import { mainnet, base } from 'viem/chains'
-import {Token} from '@lifi/sdk'
 // Re-export types from eliza
 export {
+    Action,
     ActionExample,
     Content,
     HandlerCallback,
@@ -21,8 +18,10 @@ export {
     Memory,
     ModelClass,
     State,
-    Action,
 };
+import { Chain, PublicClient, WalletClient, Hash } from 'viem'
+import {Token} from '@lifi/sdk'
+
 
 // EVM-specific types
 export type SupportedChain = 'ethereum' | 'base'
@@ -30,10 +29,11 @@ export type ProtocolType = 'LiFi' | 'Uniswap'
 
 export interface ChainConfig {
     chainId: number
-    chain: typeof mainnet | typeof base
+    chain: Chain
     rpcUrl: string
     publicClient: PublicClient
     walletClient?: WalletClient
+    contracts?: Address[]
 }
 
 export interface TokenData {
@@ -61,6 +61,25 @@ export interface SwapContent extends SwapParams {
 export interface LiFiExecutionResult {
     hash: Address
     data?: `0x${string}` | null
+}
+export interface TokenBalance {
+    token: Address;
+    symbol: string;
+    balance: string;
+    decimals: number;
+    price: string;
+}
+
+export interface WalletPortfolio {
+    nativeToken: TokenBalance;
+    tokens: TokenBalance[];
+    totalValue: string;
+}
+
+export interface PriceData {
+    [address: string]: {
+        usd: number;
+    };
 }
 
 export type Address = `0x${string}`

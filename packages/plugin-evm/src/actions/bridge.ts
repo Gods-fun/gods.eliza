@@ -1,7 +1,7 @@
 import type { Route, RoutesRequest, TransactionRequest as LiFiTransactionRequest } from '@lifi/types'
 import type { WalletProvider } from '../providers/wallet'
 import type { Transaction, BridgeParams } from '../types'
-import { CHAIN_CONFIGS } from '../providers/wallet'
+import { CHAIN_CONFIGS } from '../types
 import { ByteArray, type Hex } from 'viem'
 
 export const bridgeTemplate = `Given the recent messages and wallet information below:

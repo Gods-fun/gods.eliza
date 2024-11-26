@@ -1,53 +1,20 @@
-import {
-    createPublicClient,
-    createWalletClient,
-    http,
-    custom,
-    PublicClient,
-    WalletClient,
-    Chain,
-} from "viem";
-import { mainnet, base } from "viem/chains";
-import {
-    SupportedChain,
-    ChainConfig,
-    Address
-} from "../types";
 
-const CHAIN_CONFIGS: Record<SupportedChain, Omit<ChainConfig, 'publicClient' | 'walletClient'>> = {
-    ethereum: {
-        chainId: 1,
-        chain: mainnet,
-        rpcUrl: 'https://eth.llamarpc.com'
-    },
-    base: {
-        chainId: 8453,
-        chain: base,
-        rpcUrl: 'https://base.llamarpc.com'
-    }
-};
+import { WalletClient, PublicClient, createWalletClient, custom } from 'viem';
+import { ChainConfig, Address } from '../types';
 
 export class WalletProvider {
-    private chainConfigs: Record<SupportedChain, ChainConfig>;
-    private currentChain: SupportedChain = "ethereum";
+    private chainConfigs: Record<number, ChainConfig>;
+    private currentChainId: number;
 
-    constructor(rpcUrls?: Partial<Record<SupportedChain, string>>) {
-        this.chainConfigs = Object.entries(CHAIN_CONFIGS).reduce((acc, [chainName, config]) => {
-            const chain = chainName as SupportedChain;
-            acc[chain] = {
-                ...config,
-                publicClient: this.createPublicClient(config.chain, rpcUrls?.[chain] || config.rpcUrl),
-                walletClient: undefined
-            };
-            return acc;
-        }, {} as Record<SupportedChain, ChainConfig>);
+    constructor(chainConfigs: Record<number, ChainConfig>, defaultChainId: number) {
+        this.chainConfigs = chainConfigs;
+        this.currentChainId = defaultChainId;
     }
 
-    private createPublicClient(chain: Chain, rpcUrl: string): PublicClient {
-        return createPublicClient({
-            chain,
-            transport: http(rpcUrl)
-        });
+    private getChainConfig(chainId: number): ChainConfig {
+        const config = this.chainConfigs[chainId];
+        if (!config) throw new Error(`Unsupported chain ID: ${chainId}`);
+        return config;
     }
 
     async connect(): Promise<Address> {
@@ -61,33 +28,33 @@ export class WalletProvider {
         }
 
         const walletClient = createWalletClient({
-            chain: this.chainConfigs[this.currentChain].chain,
+            chain: this.getChainConfig(this.currentChainId).chain,
             transport: custom(ethereum),
         });
 
         const [address] = await walletClient.requestAddresses();
-        this.chainConfigs[this.currentChain].walletClient = walletClient;
+        this.chainConfigs[this.currentChainId].walletClient = walletClient;
 
         return address;
     }
 
-    getPublicClient(chain: SupportedChain): PublicClient {
-        return this.chainConfigs[chain].publicClient;
+    getPublicClient(chainId: number): PublicClient {
+        return this.getChainConfig(chainId).publicClient!;
     }
 
     getWalletClient(): WalletClient {
-        const walletClient = this.chainConfigs[this.currentChain].walletClient;
+        const walletClient = this.getChainConfig(this.currentChainId).walletClient;
         if (!walletClient) throw new Error("Wallet not connected");
         return walletClient;
     }
 
-    async switchChain(chain: SupportedChain): Promise<void> {
+    async switchChain(chainId: number): Promise<void> {
         const walletClient = this.getWalletClient();
-        await walletClient.switchChain({ id: this.chainConfigs[chain].chainId });
-        this.currentChain = chain;
+        await walletClient.switchChain({ id: this.getChainConfig(chainId).chainId });
+        this.currentChainId = chainId;
     }
 
-    getCurrentChain(): SupportedChain {
-        return this.currentChain;
+    getCurrentChainId(): number {
+        return this.currentChainId;
     }
 }

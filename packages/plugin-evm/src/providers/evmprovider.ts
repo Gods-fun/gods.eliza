@@ -21,8 +21,8 @@ export class EVMProvider {
     private static instances: Map<number, EVMProvider> = new Map();
 
     public readonly chainId: number;
-    public readonly publicClient: PublicClient;
-    public readonly walletClient: WalletClient<Transport, Chain, Account>;
+    public publicClient: PublicClient;
+    public walletClient: WalletClient<Transport, Chain, Account>;
     private readonly networkRegistry: NetworkRegistry;
     private readonly tokenRegistry: TokenRegistry;
 
@@ -36,7 +36,7 @@ export class EVMProvider {
     }
 
     private async init(chainId: number) {
-        const network = await this.networkRegistry.getNetwork(chainId);
+        const network = this.networkRegistry.getNetwork(chainId);
         if (!network) {
             throw new Error(`Network not found for chain ID: ${chainId}`);
         }
@@ -115,4 +115,5 @@ export class EVMProvider {
     }
 }
 
-export { NetworkRegistry, TokenRegistry } from '../adapters';
+export { NetworkRegistry } from '../adapters/networkRegistry.ts';
+export { TokenRegistry } from '../adapters/tokenRegistry.ts';
