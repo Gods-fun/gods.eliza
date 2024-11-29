@@ -13,10 +13,10 @@ import {
     State,
     stringToUuid,
     elizaLogger,
+    getEmbeddingZeroVector,
 } from "@ai16z/eliza";
 import { ClientBase } from "./base";
 import { buildConversationThread, sendTweet, wait } from "./utils.ts";
-import { embeddingZeroVector } from "@ai16z/eliza";
 
 export const twitterMessageHandlerTemplate =
     `{{timeline}}
@@ -129,6 +129,23 @@ export class TwitterInteractionClient {
                     !this.client.lastCheckedTweetId ||
                     BigInt(tweet.id) > this.client.lastCheckedTweetId
                 ) {
+                    // Generate the tweetId UUID the same way it's done in handleTweet
+                    const tweetId = stringToUuid(
+                        tweet.id + "-" + this.runtime.agentId
+                    );
+
+                    // Check if we've already processed this tweet
+                    const existingResponse =
+                        await this.runtime.messageManager.getMemoryById(
+                            tweetId
+                        );
+
+                    if (existingResponse) {
+                        elizaLogger.log(
+                            `Already responded to tweet ${tweet.id}, skipping`
+                        );
+                        continue;
+                    }
                     elizaLogger.log("New Tweet found", tweet.permanentUrl);
 
                     const roomId = stringToUuid(
@@ -449,7 +466,7 @@ export class TwitterInteractionClient {
                         currentTweet.userId === this.twitterUserId
                             ? this.runtime.agentId
                             : stringToUuid(currentTweet.userId),
-                    embedding: embeddingZeroVector,
+                    embedding: getEmbeddingZeroVector(),
                 });
             }
 

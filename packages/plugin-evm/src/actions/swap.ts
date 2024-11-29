@@ -1,265 +1,119 @@
-import {
-    parseUnits,
-    type PublicClient,
-    type WalletClient,
-    type Hash
-} from 'viem';
-import { v4 as uuidv4 } from "uuid";
-import { TrustScoreDatabase } from "@ai16z/plugin-trustdb/src/adapters/trustScoreDatabase";
-import { composeContext } from "@ai16z/eliza/src/context";
-import { generateObject } from "@ai16z/eliza/src/generation";
-import settings from "@ai16z/eliza/src/settings";
-import {
-    ActionExample,
-    HandlerCallback,
-    IAgentRuntime,
-    Memory,
-    ModelClass,
-    State,
-    type Action,
-} from "@ai16z/eliza/src/types";
-import { TokenProvider } from "../providers/token";
-import { TrustScoreManager } from "../providers/trustScoreProvider";
-import { walletProvider } from "@/providers/wallet";
-import {} from "../types/contracts";
-import {UNISWAP_V2_ROUTER_ABI as routerAbi} from "@/providers/contracts";
+import type { IAgentRuntime, Memory, State } from '@ai16z/eliza'
+import { ChainId, createConfig, executeRoute, ExtendedChain, getRoutes } from '@lifi/sdk'
+import { getChainConfigs, WalletProvider } from '../providers/wallet'
+import { swapTemplate } from '../templates'
+import type { SwapParams, Transaction } from '../types'
 
+export { swapTemplate }
 
-async function swapToken(
-    publicClient: PublicClient,
-    walletClient: WalletClient,
-    inputTokenCA: string,
-    outputTokenCA: string,
-    amount: number,
-    walletAddress: string
-): Promise<Hash> {
-    try {
-        const router = settings.chainConfig.dex.routerAddress as `0x${string}`;
-        const WETH = settings.chainConfig.dex.wethAddress as `0x${string}`;
+export class SwapAction {
+  private config
 
-        // Get token decimals
-        const decimals = inputTokenCA === settings.chainConfig.nativeCurrency.address ? 18 :
-            await publicClient.readContract({
-                address: inputTokenCA as `0x${string}`,
-                abi: [{
-                    inputs: [],
-                    name: "decimals",
-                    outputs: [{ type: "uint8" }],
-                    stateMutability: "view",
-                    type: "function"
-                }],
-                functionName: "decimals"
-            });
-
-        const amountIn = parseUnits(amount.toString(), decimals);
-
-        // Get quote from DEX
-        const path = inputTokenCA === settings.chainConfig.nativeCurrency.address ?
-            [WETH, outputTokenCA] :
-            [inputTokenCA, outputTokenCA];
-
-        // Calculate minimum amount out with 0.5% slippage
-        const amounts = await publicClient.readContract({
-            address: router,
-            abi: routerAbi,
-            functionName: "getAmountsOut",
-            args: [amountIn, path]
-        });
-
-        const amountOutMin = amounts[1] * BigInt(995) / BigInt(1000); // 0.5% slippage
-        const deadline = BigInt(Math.floor(Date.now() / 1000) + 60 * 20); // 20 minutes
-
-        // Prepare transaction
-        if (inputTokenCA === settings.chainConfig.nativeCurrency.address) {
-            // Native token swap
-            return await walletClient.writeContract({
-                address: router,
-                abi: routerAbi,
-                functionName: "swapExactETHForTokens",
-                args: [amountOutMin, path, walletAddress as `0x${string}`, deadline],
-                value: amountIn
-            });
-        } else {
-            // ERC20 swap
-            // First approve router
-            const approvalTx = await walletClient.writeContract({
-                address: inputTokenCA as `0x${string}`,
-                abi: [
-                    {
-                        inputs: [
-                            { name: "spender", type: "address" },
-                            { name: "amount", type: "uint256" },
-                        ],
-                        name: "approve",
-                        outputs: [{ name: "success", type: "bool" }],
-                        stateMutability: "nonpayable",
-                        type: "function",
-                    },
-                ],
-                functionName: "approve",
-                args: [router, amountIn],
-                chain: undefined,
-                account: null,
-            });
-
-            // Wait for approval
-            await publicClient.waitForTransactionReceipt({ hash: approvalTx });
-
-            // Execute swap
-            return await walletClient.writeContract({
-                address: router,
-                abi: routerAbi,
-                functionName: "swapExactTokensForTokens",
-                args: [amountIn, amountOutMin, path, walletAddress as `0x${string}`, deadline]
-            });
-        }
-    } catch (error) {
-        console.error("Error in swapToken:", error);
-        throw error;
-    }
-}
-
-// Keep the same template but update the example addresses
-const swapTemplate = `Respond with a JSON markdown block containing only the extracted values. Use null for any values that cannot be determined.
-
-Example response:
-\`\`\`json
-{
-    "inputTokenSymbol": "ETH",
-    "outputTokenSymbol": "USDC", 
-    "inputTokenCA": "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE",
-    "outputTokenCA": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
-    "amount": 1.5
-}
-\`\`\`
-
-{{recentMessages}}
-
-Given the recent messages and wallet information below:
-
-{{walletInfo}}
-
-Extract the following information about the requested token swap:
-- Input token symbol (the token being sold)
-- Output token symbol (the token being bought) 
-- Input token contract address if provided
-- Output token contract address if provided
-- Amount to swap
-
-Respond with a JSON markdown block containing only the extracted values. Use null for any values that cannot be determined.`;
-
-// Rest of the functions remain similar but adapted for EVM
-async function getTokensInWallet(runtime: IAgentRuntime) {
-    const { provider } = walletProvider.getProviderAndWallet(settings.chainConfig.chainId);
-
-    const walletInfo = await walletProvider.get(runtime, { type: "GET_WALLET" }, {});
-    return JSON.parse(walletInfo).tokens || [];
-}
-
-async function getTokenFromWallet(runtime: IAgentRuntime, tokenSymbol: string) {
-    try {
-        const items = await getTokensInWallet(runtime);
-        const token = items.find((item) => item.symbol.toUpperCase() === tokenSymbol.toUpperCase());
-        return token ? token.token : null;
-    } catch (error) {
-        console.error("Error checking token in wallet:", error);
-        return null;
-    }
-}
-
-export const executeSwap: Action = {
-    name: "EXECUTE_SWAP",
-    similes: ["SWAP_TOKENS", "TOKEN_SWAP", "TRADE_TOKENS", "EXCHANGE_TOKENS"],
-    validate: async (_runtime: IAgentRuntime, message: Memory) => {
-        console.log("Message:", message);
-        return true;
-    },
-    description: "Perform a token swap.",
-    handler: async (
-        runtime: IAgentRuntime,
-        message: Memory,
-        state: State,
-        _options: { [key: string]: unknown },
-        callback?: HandlerCallback
-    ): Promise<boolean> => {
-        if (!state) {
-            state = (await runtime.composeState(message)) as State;
-        } else {
-            state = await runtime.updateRecentMessageState(state);
-        }
-
-        const swapContext = composeContext({
-            state,
-            template: swapTemplate,
-        });
-
-        const response = await generateObject({
-            runtime,
-            context: swapContext,
-            modelClass: ModelClass.LARGE,
-        });
-
-        console.log("Response:", response);
-
-        // Here, response should contain the necessary swap details
-        // extracted from the user's input (message) and context (state)
-        if (!response.inputTokenSymbol || !response.outputTokenSymbol || !response.amount) {
-            callback?.({ text: "I couldn't determine all the necessary details for the swap. Can you please provide the input token, output token, and amount?" });
-            return false;
-        }
-
-        const chainId = state.chainId || runtime.chainId; // Assuming chainId is stored in state or runtime
-
-        const { provider, wallet } = await walletProvider.getProviderAndWallet(chainId);
-
-        // Resolve token addresses
-        const inputTokenCA = await getTokenFromWallet(runtime, response.inputTokenSymbol);
-        const outputTokenCA = await getTokenFromWallet(runtime, response.outputTokenSymbol);
-
-        if (!inputTokenCA || !outputTokenCA) {
-            callback?.({ text: "I couldn't find one or both of the tokens in your wallet. Please make sure you have both tokens." });
-            return false;
-        }
-
-        try {
-            const tx = await swapToken(
-                provider,
-                wallet,
-                inputTokenCA,
-                outputTokenCA,
-                response.amount,
-                wallet.account.address
-            );
-
-            const receipt = await provider.waitForTransactionReceipt({ hash: tx });
-
-            if (receipt.status === 'success') {
-                callback?.({ text: `Swap executed successfully. Transaction hash: ${tx}` });
-            } else {
-                callback?.({ text: `Swap failed. Transaction hash: ${tx}` });
-            }
-
-            // Update trust score
-            const trustScoreManager = new TrustScoreManager(new TrustScoreDatabase());
-            await trustScoreManager.updateTrustScore(runtime.userId, 'swap', 1);
-
-            return true;
-        } catch (error) {
-            console.error("Error executing swap:", error);
-            callback?.({ text: `An error occurred while executing the swap: ${error.message}` });
-            return false;
-        }
-    },
-    examples: [
-        {
-            input: "I want to swap 0.1 ETH for USDC",
-            output: "Certainly! I'll help you swap 0.1 ETH for USDC. Let me execute that swap for you.",
+  constructor(private walletProvider: WalletProvider) {
+    this.config = createConfig({
+      integrator: 'eliza',
+      chains: Object.values(getChainConfigs(this.walletProvider.runtime)).map(config => ({
+        id: config.chainId,
+        name: config.name,
+        key: config.name.toLowerCase(),
+        chainType: 'EVM' as const,
+        nativeToken: {
+          ...config.nativeCurrency,
+          chainId: config.chainId,
+          address: '0x0000000000000000000000000000000000000000',
+          coinKey: config.nativeCurrency.symbol,
+          priceUSD: '0',
+          logoURI: '',
+          symbol: config.nativeCurrency.symbol,
+          decimals: config.nativeCurrency.decimals,
+          name: config.nativeCurrency.name
         },
-        {
-            input: "Can you exchange 100 USDC for ETH?",
-            output: "Of course! I'll help you exchange 100 USDC for ETH. Let me process that swap for you.",
+        rpcUrls: {
+          public: { http: [config.rpcUrl] }
         },
-    ] as ActionExample[][],
-};
+        blockExplorerUrls: [config.blockExplorerUrl],
+        metamask: {
+          chainId: `0x${config.chainId.toString(16)}`,
+          chainName: config.name,
+          nativeCurrency: config.nativeCurrency,
+          rpcUrls: [config.rpcUrl],
+          blockExplorerUrls: [config.blockExplorerUrl]
+        },
+        coin: config.nativeCurrency.symbol,
+        mainnet: true,
+        diamondAddress: '0x0000000000000000000000000000000000000000'
+      })) as ExtendedChain[],
+    })
+  }
 
-export default executeSwap;
+  async swap(params: SwapParams): Promise<Transaction> {
+    const walletClient = this.walletProvider.getWalletClient()
+    const [fromAddress] = await walletClient.getAddresses()
+
+    const routes = await getRoutes({
+      fromChainId: getChainConfigs(this.walletProvider.runtime)[params.chain].chainId as ChainId,
+      toChainId: getChainConfigs(this.walletProvider.runtime)[params.chain].chainId as ChainId,
+      fromTokenAddress: params.fromToken,
+      toTokenAddress: params.toToken,
+      fromAmount: params.amount,
+      fromAddress: fromAddress,
+      options: {
+        slippage: params.slippage || 0.5,
+        order: 'RECOMMENDED'
+      }
+    })
+
+    if (!routes.routes.length) throw new Error('No routes found')
+    
+    const execution = await executeRoute(routes.routes[0], this.config)
+    const process = execution.steps[0]?.execution?.process[0]
+    
+    if (!process?.status || process.status === 'FAILED') {
+      throw new Error('Transaction failed')
+    }
+
+    return {
+      hash: process.txHash as `0x${string}`,
+      from: fromAddress,
+      to: routes.routes[0].steps[0].estimate.approvalAddress as `0x${string}`,
+      value: BigInt(params.amount),
+      data: process.data as `0x${string}`,
+      chainId: getChainConfigs(this.walletProvider.runtime)[params.chain].chainId
+    }
+  }
+}
+
+export const swapAction = {
+  name: 'swap',
+  description: 'Swap tokens on the same chain',
+  handler: async (runtime: IAgentRuntime, message: Memory, state: State, options: any, callback?: any) => {
+    try {
+      const walletProvider = new WalletProvider(runtime)
+      const action = new SwapAction(walletProvider)
+      return await action.swap(options)
+    } catch (error) {
+      console.error('Error in swap handler:', error.message)
+      if (callback) {
+        callback({ text: `Error: ${error.message}` })
+      }
+      return false
+    }
+  },
+  template: swapTemplate,
+  validate: async (runtime: IAgentRuntime) => {
+    const privateKey = runtime.getSetting("EVM_PRIVATE_KEY")
+    return typeof privateKey === 'string' && privateKey.startsWith('0x')
+  },
+  examples: [
+    [
+      {
+        user: "user",
+        content: {
+          text: "Swap 1 ETH for USDC on Base",
+          action: "TOKEN_SWAP"
+        }
+      }
+    ]
+  ],
+  similes: ['TOKEN_SWAP', 'EXCHANGE_TOKENS', 'TRADE_TOKENS']
+} // TODO: add more examples
