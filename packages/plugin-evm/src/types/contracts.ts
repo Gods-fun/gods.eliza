@@ -16,9 +16,9 @@ export interface IContractCall {
 }
 
 export interface IContractRegistry {
-  contracts: Map<string, IContractDefinition>;
-  addContract(contract: IContractDefinition): void;
-  getContract(name: string): IContractDefinition | undefined;
+    contracts: Map<string, IContractDefinition>;
+    addContract(contract: IContractDefinition): Promise<void>;
+    getContract(name: string): Promise<IContractDefinition | undefined>;
 }
 
 export interface ITransactionResult {
@@ -35,6 +35,6 @@ export interface ITransactionError {
   params: readonly unknown[];
 }
 
-export type ContractCallbackData = 
+export type ContractCallbackData =
   | { type: 'CONTRACT_CALL_SUCCESS'; data: ITransactionResult }
   | { type: 'CONTRACT_CALL_ERROR'; data: ITransactionError };

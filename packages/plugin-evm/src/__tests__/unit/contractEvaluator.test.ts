@@ -1,7 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { ContractEvaluator } from '@/evaluators/contractEvaluator';
-import { IAgentRuntime } from '@/actions/contractActions';
-import { ContractProvider } from '@/providers/contractProvider';
+import { ContractEvaluator } from '../../evaluators/contractEvaluator';
+import { IAgentRuntime } from "@ai16z/eliza/src/types";
+import { ContractProvider } from '../../providers/contractProvider';
 
 describe('ContractEvaluator', () => {
   let evaluator: ContractEvaluator;

@@ -1,5 +1,5 @@
 import type { Token } from '@lifi/types'
-import type { Account, Address, Chain, Hash, HttpTransport, PublicClient, WalletClient } from 'viem'
+import type { Account, Chain, Hash, HttpTransport, PublicClient, WalletClient } from 'viem'
 
 export type SupportedChain = 'ethereum' | 'base'
 

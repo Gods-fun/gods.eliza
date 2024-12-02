@@ -1,4 +1,4 @@
-import { ContractProvider } from '@/providers/contractProvider';
+import { contractProvider } from '../providers/contractProvider';
 import { IAgentRuntime } from '@ai16z/eliza/src/types';
 
 interface IEvaluationResult {
@@ -15,12 +15,11 @@ export class ContractEvaluator {
     method: string,
     params: readonly unknown[],
   ): Promise<IEvaluationResult> {
-    const contractProvider = ContractProvider.getProvider<ContractProvider>('ContractProvider');
     const contract = await contractProvider.getContract(contractName);
-    
+
     const risks: string[] = [];
     const suggestions: string[] = [];
-    
+
     // Validate method exists
     if (typeof contract[method] !== 'function') {
       return {
@@ -30,7 +29,7 @@ export class ContractEvaluator {
         suggestions: ['Verify method name and contract ABI'],
       };
     }
-    
+
     // Estimate gas (this is a simplified example)
     let estimatedGas = '0';
     try {
@@ -40,7 +39,7 @@ export class ContractEvaluator {
       risks.push('Gas estimation failed');
       suggestions.push('Verify parameter types and values');
     }
-    
+
     return {
       isValid: risks.length === 0,
       estimatedGas,
