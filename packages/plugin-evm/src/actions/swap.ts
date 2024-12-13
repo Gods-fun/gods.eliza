@@ -64,10 +64,10 @@ export class SwapAction {
     })
 
     if (!routes.routes.length) throw new Error('No routes found')
-    
+
     const execution = await executeRoute(routes.routes[0], this.config)
     const process = execution.steps[0]?.execution?.process[0]
-    
+
     if (!process?.status || process.status === 'FAILED') {
       throw new Error('Transaction failed')
     }
@@ -83,14 +83,16 @@ export class SwapAction {
   }
 }
 
-export const swapAction = {
+export const executeSwap = {
   name: 'swap',
   description: 'Swap tokens on the same chain',
-  handler: async (runtime: IAgentRuntime, message: Memory, state: State, options: any, callback?: any) => {
+  handler: async (runtime: IAgentRuntime, message: Memory, state: State, options: any = {}, callback?: any) => {
     try {
       const walletProvider = new WalletProvider(runtime)
       const action = new SwapAction(walletProvider)
-      return await action.swap(options)
+      const swapOptions = Object.keys(options).length ? options : message.content.data
+      await action.swap(swapOptions)
+      return true
     } catch (error) {
       console.error('Error in swap handler:', error.message)
       if (callback) {
@@ -116,4 +118,4 @@ export const swapAction = {
     ]
   ],
   similes: ['TOKEN_SWAP', 'EXCHANGE_TOKENS', 'TRADE_TOKENS']
-} // TODO: add more examples
+}

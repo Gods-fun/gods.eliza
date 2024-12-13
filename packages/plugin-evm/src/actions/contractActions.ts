@@ -99,6 +99,7 @@ function parseUserMessageToContractCall(message: string): IContractCall | null {
     const contractNameMatch = message.match(/contractName\s*[:=]\s*(\w+)/i);
     const methodMatch = message.match(/method\s*[:=]\s*(\w+)/i);
     const paramsMatch = message.match(/params\s*[:=]\s*(\[[^\]]*\])/i);
+    const valueMatch = message.match(/value\s*[:=]\s*"([^"]+)"/i);
 
     if (!contractNameMatch || !methodMatch || !paramsMatch) {
         console.error("Message format is incorrect");
@@ -107,6 +108,7 @@ function parseUserMessageToContractCall(message: string): IContractCall | null {
 
     const contractName = contractNameMatch[1];
     const method = methodMatch[1];
+    const value = valueMatch ? valueMatch[1] : undefined;
     let params;
 
     try {
@@ -125,6 +127,7 @@ function parseUserMessageToContractCall(message: string): IContractCall | null {
         contractName,
         method,
         params,
+        value,
     };
 }
 
@@ -139,7 +142,7 @@ export const callContractAction: Action = {
     ): Promise<boolean> => {
         let data = parseUserMessageToContractCall(message.content.text) as IContractCall;
         return (
-            typeof data.contractName === 'string' &&
+            !!data && typeof data.contractName === 'string' &&
             typeof data.method === 'string' &&
             Array.isArray(data.params)
         );
@@ -147,46 +150,62 @@ export const callContractAction: Action = {
     handler: async (
         runtime: IAgentRuntime,
         message: Memory,
-        _state: State,
+        state: State,
         _options: { [key: string]: unknown },
         callback?: HandlerCallback
     ): Promise<boolean> => {
         const data = parseUserMessageToContractCall(message.content.text);
         if (!data) {
+            console.error("Failed to parse contract call from message");
             return false;
         }
 
         const { contractName, method, params, value } = data;
+        console.log("Parsed contract call:", { contractName, method, params, value });
+
 
         try {
-            const contract = await contractProvider.getContract(contractName);
-            const result = await contract[method](...params, { value });
+            const provider = runtime.getProvider(ContractProvider) as ContractProvider;
+            const contract = await provider.getContract(contractName);
+
+            if (!contract) {
+                throw new Error(`Contract ${contractName} not found`);
+            }
+
+            const options = value ? { value } : undefined;
+            const tx = options ?
+                await contract[method](...params, options) :
+                await contract[method](...params);
+
+            console.log("Transaction hash:", tx.hash);
 
             if (callback) {
                 await callback({
-                    text: `Calling ${contractName}:${method} txHash:${result.hash}`,
+                    text: `Calling ${contractName}:${method} txHash:${tx.hash}`,
                     type: 'CONTRACT_CALL_SUCCESS',
                     data: {
-                        transactionHash: result.hash,
+                        transactionHash: tx.hash,
                         contractName,
                         method,
-                        params
-                    }
+                        params,
+                    },
                 });
             }
 
             return true;
         } catch (error) {
+            console.error("Error during contract call:", error);
+
             if (callback) {
                 await callback({
-                    text: `Error Calling ${contractName}:${method} error:${(error as Error).message}`,
+                    text: `Error during contract call: ${error.message}`,
                     type: 'CONTRACT_CALL_ERROR',
                     data: {
-                        error: (error as Error).message,
+                        error: error.message,
                         contractName,
                         method,
-                        params
-                    }
+                        params,
+                    },
                 });
             }
 

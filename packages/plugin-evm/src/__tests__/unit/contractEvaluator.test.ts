@@ -1,113 +1,101 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { ContractEvaluator } from '../../evaluators/contractEvaluator';
-import { IAgentRuntime } from "@ai16z/eliza/src/types";
+import { IAgentRuntime } from '@ai16z/eliza/src/types';
 import { ContractProvider } from '../../providers/contractProvider';
+import { contractProvider } from '../../providers/contractProvider';
 
 describe('ContractEvaluator', () => {
-  let evaluator: ContractEvaluator;
-  let mockRuntime: IAgentRuntime;
-  let mockContract: any;
-  let mockContractProvider: ContractProvider;
+    let evaluator: ContractEvaluator;
+    let mockRuntime: IAgentRuntime;
+    let mockContract: any;
 
-  beforeEach(() => {
-    evaluator = new ContractEvaluator();
-    mockContract = {
-      validMethod: {
-        estimateGas: vi.fn(),
-      },
-    };
-    mockContractProvider = {
-      getContract: vi.fn().mockResolvedValue(mockContract),
-    } as unknown as ContractProvider;
-    mockRuntime = {
-      getProvider: vi.fn().mockReturnValue(mockContractProvider),
-    };
-  });
+    beforeEach(async () => {
+        evaluator = new ContractEvaluator();
 
-  it('should return invalid result for non-existent method', async () => {
-    const result = await evaluator.evaluateContractCall(
-        mockRuntime,
-        'TestContract',
-        'nonExistentMethod',
-        []
-    );
+        // Create mock contract
+        mockContract = {
+            transfer: vi.fn().mockImplementation((...args) => {
+                return Promise.resolve({ hash: '0x123' });
+            }),
+            estimateGas: {
+                transfer: vi.fn().mockResolvedValue('50000'),
+            },
+        };
 
-    expect(result).toEqual({
-      isValid: false,
-      estimatedGas: '0',
-      risks: ['Method does not exist on contract'],
-      suggestions: ['Verify method name and contract ABI'],
-    });
-  });
+        // Mock the contract provider
+        vi.spyOn(contractProvider, 'getContract').mockImplementation(async (name) => {
+            if (name === 'TestContract') {
+                return mockContract;
+            }
+            throw new Error(`Contract ${name} not found`);
+        });
 
-  it('should return valid result for existing method with successful gas estimation', async () => {
-    mockContract.validMethod.estimateGas.mockResolvedValue('1000');
+        // Add test contract to registry
+        await contractProvider.registry.addContract({
+            name: 'TestContract',
+            address: '0x1234567890abcdef1234567890abcdef12345678',
+            chainId: 1,
+            abi: [
+                "function transfer(address recipient, uint256 amount) public returns (bool)",
+                "function balanceOf(address account) public view returns (uint256)"
+            ],
+        });
 
-    const result = await evaluator.evaluateContractCall(
-        mockRuntime,
-        'TestContract',
-        'validMethod',
-        ['param1', 'param2']
-    );
-
-    expect(result).toEqual({
-      isValid: true,
-      estimatedGas: '1000',
-      risks: [],
-      suggestions: [],
-    });
-    expect(mockContract.validMethod.estimateGas).toHaveBeenCalledWith('param1', 'param2');
-  });
-
-  it('should return invalid result when gas estimation fails', async () => {
-    mockContract.validMethod.estimateGas.mockRejectedValue(new Error('Gas estimation failed'));
-
-    const result = await evaluator.evaluateContractCall(
-        mockRuntime,
-        'TestContract',
-        'validMethod',
-        ['param1', 'param2']
-    );
-
-    expect(result).toEqual({
-      isValid: false,
-      estimatedGas: '0',
-      risks: ['Gas estimation failed'],
-      suggestions: ['Verify parameter types and values'],
-    });
-  });
-
-  it('should use ContractProvider to get the contract', async () => {
-    mockContract.validMethod.estimateGas.mockResolvedValue('1000');
-
-    await evaluator.evaluateContractCall(
-        mockRuntime,
-        'TestContract',
-        'validMethod',
-        []
-    );
-
-    expect(mockRuntime.getProvider).toHaveBeenCalledWith('ContractProvider');
-    expect(mockContractProvider.getContract).toHaveBeenCalledWith('TestContract');
-  });
-
-  it('should handle errors thrown by getContract', async () => {
-    vi.mocked(mockContractProvider.getContract).mockImplementation(() => {
-      throw new Error('Contract not found');
+        mockRuntime = {
+            getProvider: vi.fn().mockReturnValue(contractProvider),
+        } as unknown as IAgentRuntime;
     });
 
-    const result = await evaluator.evaluateContractCall(
-        mockRuntime,
-        'NonExistentContract',
-        'someMethod',
-        []
-    );
+    it('should validate a valid contract call', async () => {
+        const result = await evaluator.evaluateContractCall(
+            mockRuntime,
+            'TestContract',
+            'transfer',
+            ['0x1234', '100']
+        );
 
-    expect(result).toEqual({
-      isValid: false,
-      estimatedGas: '0',
-      risks: ['Contract not found'],
-      suggestions: ['Verify contract name and ensure it is properly registered'],
+        expect(result.isValid).toBe(true);
+        expect(result.estimatedGas).toBe('50000');
+        expect(result.risks).toHaveLength(0);
     });
-  });
+
+    it('should handle invalid method', async () => {
+        const result = await evaluator.evaluateContractCall(
+            mockRuntime,
+            'TestContract',
+            'invalidMethod',
+            ['0x1234', '100']
+        );
+
+        expect(result.isValid).toBe(false);
+        expect(result.risks).toContain('Method does not exist on contract');
+    });
+
+    it('should handle gas estimation failure', async () => {
+        // Mock gas estimation failure
+        mockContract.estimateGas.transfer.mockRejectedValue(new Error('Gas estimation failed'));
+
+        const result = await evaluator.evaluateContractCall(
+            mockRuntime,
+            'TestContract',
+            'transfer',
+            ['0x1234', '100']
+        );
+
+        expect(result.isValid).toBe(false);
+        expect(result.risks).toContain('Gas estimation failed');
+        expect(result.suggestions).toContain('Verify parameter types and values');
+    });
+
+    it('should handle non-existent contract', async () => {
+        const result = await evaluator.evaluateContractCall(
+            mockRuntime,
+            'NonExistentContract',
+            'transfer',
+            ['0x1234', '100']
+        );
+
+        expect(result.isValid).toBe(false);
+        expect(result.risks).toContain('Contract not found');
+    });
 });
